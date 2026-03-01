@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "450194047530",
+    "project_id": "scanpay-fac56",
+    "storage_bucket": "scanpay-fac56.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:450194047530:android:0d0b1c5b24e7fbdf5cf953",
+        "android_client_info": {
+          "package_name": "com.example.scanpay"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCiJYwfRIouDNwqdHduuQXI1QoWFW5Rz-w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
