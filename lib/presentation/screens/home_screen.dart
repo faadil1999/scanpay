@@ -1,34 +1,80 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:intl/intl.dart';
 import '../providers/auth_provider.dart';
+import '../providers/transaction_provider.dart';
 import 'scanner_screen.dart';
 import 'generate_qr_screen.dart';
 import 'history_screen.dart';
 import 'settings_screen.dart';
+import 'auth/auth_choice_screen.dart';
 
-class HomeScreen extends StatefulWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends ConsumerState<HomeScreen> {
   int _selectedIndex = 0;
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
-    final user = authProvider.user;
-    final isMerchant = authProvider.isMerchant;
+    final user = ref.watch(userProvider);
 
-    if (user == null) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (user == null) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF8FAFC),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF006847)),
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  "Chargement de votre profil...",
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Color(0xFF64748B)),
+                ),
+                const SizedBox(height: 48),
+                // Fallback button if it takes too long
+                TextButton.icon(
+                  onPressed: () async {
+                    await ref.read(authControllerProvider).signOut();
+                    if (context.mounted) {
+                      Navigator.of(context).pushAndRemoveUntil(
+                        MaterialPageRoute(builder: (context) => const AuthChoiceScreen()),
+                            (route) => false,
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.logout),
+                  label: const Text("Retour à l'accueil"),
+                  style: TextButton.styleFrom(foregroundColor: const Color(0xFF006847)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Check if user has both roles and which view is active
+    final hasBothRoles = user.roles.contains('client') && user.roles.contains('merchant');
+    final isMerchantView = ref.watch(isMerchantViewProvider);
+
+    // If user only has one role, force that view
+    final bool effectiveIsMerchant = hasBothRoles ? isMerchantView : user.isMerchant;
 
     // Liste des écrans pour chaque onglet
     final List<Widget> screens = [
-      _buildDashboard(context, user, isMerchant),
-      isMerchant ? const GenerateQRScreen() : const ScannerScreen(),
+      _buildDashboard(context, user, effectiveIsMerchant, hasBothRoles),
+      effectiveIsMerchant ? const GenerateQRScreen() : const ScannerScreen(),
       const HistoryScreen(),
       const SettingsScreen(),
     ];
@@ -36,11 +82,13 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       body: screens[_selectedIndex],
-      bottomNavigationBar: _buildBottomNav(context, isMerchant),
+      bottomNavigationBar: _buildBottomNav(context, effectiveIsMerchant),
     );
   }
 
-  Widget _buildDashboard(BuildContext context, user, bool isMerchant) {
+  Widget _buildDashboard(BuildContext context, user, bool isMerchant, bool hasBothRoles) {
+    final transactionsAsync = ref.watch(transactionsProvider);
+
     return SafeArea(
       child: CustomScrollView(
         physics: const BouncingScrollPhysics(),
@@ -57,8 +105,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Bonjour,',
-                            style: TextStyle(color: Color(0xFF64748B), fontSize: 14, fontWeight: FontWeight.w500),
+                            isMerchant ? 'Espace Marchand' : 'Bonjour,',
+                            style: const TextStyle(color: Color(0xFF64748B), fontSize: 14, fontWeight: FontWeight.w500),
                           ),
                           Text(
                             user.name,
@@ -66,9 +114,22 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ],
                       ),
-                      CircleAvatar(
-                        radius: 24,
-                        backgroundImage: NetworkImage(user.avatarUrl),
+                      Row(
+                        children: [
+                          if (hasBothRoles)
+                            IconButton(
+                              icon: Icon(isMerchant ? LucideIcons.user : LucideIcons.store, color: const Color(0xFF64748B)),
+                              onPressed: () {
+                                ref.read(isMerchantViewProvider.notifier).state = !isMerchant;
+                              },
+                              tooltip: isMerchant ? 'Passer en mode Client' : 'Passer en mode Marchand',
+                            ),
+                          CircleAvatar(
+                            radius: 24,
+                            backgroundImage: user.avatarUrl != null ? NetworkImage(user.avatarUrl!) : null,
+                            child: user.avatarUrl == null ? const Icon(Icons.person) : null,
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -81,7 +142,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 32),
                   _buildSectionHeader("Activité Récente"),
                   const SizedBox(height: 16),
-                  _buildRecentActivity(),
+                  transactionsAsync.when(
+                    data: (transactions) => _buildRecentActivity(transactions, user.uid),
+                    loading: () => const Center(child: CircularProgressIndicator()),
+                    error: (e, s) => Text('Erreur: $e'),
+                  ),
                 ],
               ),
             ),
@@ -204,7 +269,16 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildRecentActivity() {
+  Widget _buildRecentActivity(List transactions, String currentUid) {
+    if (transactions.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(20.0),
+          child: Text("Aucune activité récente", style: TextStyle(color: Color(0xFF64748B))),
+        ),
+      );
+    }
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -214,20 +288,43 @@ class _HomeScreenState extends State<HomeScreen> {
       child: ListView.separated(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
-        itemCount: 3,
+        itemCount: transactions.length > 5 ? 5 : transactions.length,
         separatorBuilder: (context, index) => const Divider(height: 1, color: Color(0xFFF1F5F9)),
         itemBuilder: (context, index) {
+          final tx = transactions[index];
+          final isOutgoing = tx.senderId == currentUid;
+
           return ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
             leading: Container(
               width: 44,
               height: 44,
-              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(12)),
-              child: const Icon(LucideIcons.shoppingBag, size: 20, color: Color(0xFF64748B)),
+              decoration: BoxDecoration(
+                color: isOutgoing ? const Color(0xFFFEF2F2) : const Color(0xFFF0FDF4),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                isOutgoing ? LucideIcons.arrowUpRight : LucideIcons.arrowDownLeft,
+                size: 20,
+                color: isOutgoing ? const Color(0xFFEF4444) : const Color(0xFF22C55E),
+              ),
             ),
-            title: const Text("Supermarché Erevan", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-            subtitle: const Text("Aujourd'hui, 14:20", style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-            trailing: const Text("-4.500 F", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+            title: Text(
+              isOutgoing ? tx.receiverName : tx.senderName,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+            ),
+            subtitle: Text(
+              DateFormat('dd MMM, HH:mm').format(tx.timestamp),
+              style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+            ),
+            trailing: Text(
+              "${isOutgoing ? '-' : '+'}${tx.amount.toStringAsFixed(0)} F",
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: isOutgoing ? const Color(0xFFEF4444) : const Color(0xFF22C55E),
+              ),
+            ),
           );
         },
       ),

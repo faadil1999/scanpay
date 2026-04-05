@@ -1,23 +1,29 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
-import 'home_screen.dart'; // Assurez-vous d'avoir cet import ou changez vers votre écran principal
+import '../providers/auth_provider.dart';
+import 'home_screen.dart';
+import 'auth/auth_choice_screen.dart';
+import 'auth/register_screen.dart';
 
-class SplashScreen extends StatefulWidget {
+class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
 
   @override
-  State<SplashScreen> createState() => _SplashScreenState();
+  ConsumerState<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderStateMixin {
+class _SplashScreenState extends ConsumerState<SplashScreen> with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _fadeAnimation;
   late Animation<double> _scaleAnimation;
+  bool _animationDone = false;
+  bool _navigated = false;
 
   @override
   void initState() {
     super.initState();
-    
+
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
@@ -28,17 +34,69 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     );
 
     _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
+      CurvedAnimation(parent: _controller, curve: Curves.bounceIn),
     );
 
     _controller.forward();
 
-    // Navigation vers l'écran suivant après 3 secondes
-    Timer(const Duration(seconds: 3), () {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (context) => const HomeScreen()),
-      );
+    _startInitSequence();
+  }
+
+  Future<void> _startInitSequence() async {
+    // 1. Wait for minimum splash animation time (3 seconds)
+    await Future.delayed(const Duration(seconds: 3));
+
+    if (!mounted) return;
+
+    setState(() {
+      _animationDone = true;
     });
+
+    // 2. Check current auth state
+    final authState = ref.read(authStateProvider);
+
+    if (!authState.isLoading) {
+      // If already resolved (data or error), navigate immediately
+      _navigateToNext(authState.valueOrNull);
+    } else {
+      // 3. If still loading, set a safety timeout (5 more seconds)
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted && !_navigated) {
+          debugPrint("Auth check timed out, redirecting to AuthChoice");
+          _navigateToNext(null);
+        }
+      });
+    }
+  }
+
+  void _navigateToNext(dynamic user) async {
+    if (_navigated || !mounted) return;
+    _navigated = true;
+
+    if (user != null) {
+      // Fetch user data from Firestore
+      try {
+        // Set a timeout for fetching user data to avoid hanging
+        await ref.read(authControllerProvider).fetchUserData().timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => debugPrint("Fetch user data timed out"),
+        );
+      } catch (e) {
+        debugPrint("Error fetching user data: $e");
+      }
+
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => const HomeScreen()),
+        );
+      }
+    } else {
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => const AuthChoiceScreen()),
+        );
+      }
+    }
   }
 
   @override
@@ -49,6 +107,13 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
 
   @override
   Widget build(BuildContext context) {
+    // Listen for auth state changes reactively
+    ref.listen<AsyncValue<dynamic>>(authStateProvider, (previous, next) {
+      if (_animationDone && !next.isLoading) {
+        _navigateToNext(next.valueOrNull);
+      }
+    });
+
     return Scaffold(
       body: Container(
         width: double.infinity,
@@ -86,7 +151,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                 ),
               ),
             ),
-            
+
             // Contenu central
             Center(
               child: FadeTransition(
@@ -118,7 +183,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                         ),
                       ),
                       const SizedBox(height: 24),
-                      
+
                       // App Name
                       const Text(
                         'ScanPay',
@@ -129,7 +194,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                           letterSpacing: -1,
                         ),
                       ),
-                      
+
                       // Benin Label
                       Row(
                         mainAxisSize: MainAxisSize.min,
@@ -150,9 +215,9 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                           Container(height: 2, width: 30, color: const Color(0xFFFFCC00)),
                         ],
                       ),
-                      
+
                       const SizedBox(height: 60),
-                      
+
                       // Loading Indicator
                       const SizedBox(
                         width: 20,
@@ -167,7 +232,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                 ),
               ),
             ),
-            
+
             // Footer text
             const Positioned(
               bottom: 40,

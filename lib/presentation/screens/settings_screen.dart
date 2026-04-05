@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import 'splash_screen.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(userProvider);
+    final isMerchantView = ref.watch(isMerchantViewProvider);
+    final hasBothRoles = user?.roles.contains('client') == true && user?.roles.contains('merchant') == true;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
@@ -31,18 +34,19 @@ class SettingsScreen extends StatelessWidget {
                 children: [
                   CircleAvatar(
                     radius: 30,
-                    backgroundImage: NetworkImage(authProvider.user?.avatarUrl ?? ""),
+                    backgroundImage: user?.avatarUrl != null ? NetworkImage(user!.avatarUrl!) : null,
+                    child: user?.avatarUrl == null ? const Icon(Icons.person) : null,
                   ),
                   const SizedBox(width: 16),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        authProvider.user?.name ?? "",
+                        user?.name ?? "Utilisateur",
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                       ),
                       Text(
-                        authProvider.user?.phoneNumber ?? "",
+                        user?.phoneNumber ?? "",
                         style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
                       ),
                     ],
@@ -52,17 +56,18 @@ class SettingsScreen extends StatelessWidget {
             ),
             const SizedBox(height: 32),
 
-            // Mode Switch
-            _buildSettingItem(
-              icon: LucideIcons.store,
-              title: "Mode Marchand",
-              subtitle: "Activer les outils de vente",
-              trailing: Switch(
-                value: authProvider.isMerchant,
-                onChanged: (val) => authProvider.toggleMode(),
-                activeColor: const Color(0xFFF59E0B),
+            // Mode Switch (Only if user has both roles)
+            if (hasBothRoles)
+              _buildSettingItem(
+                icon: LucideIcons.store,
+                title: "Mode Marchand",
+                subtitle: "Basculer vers l'interface marchand",
+                trailing: Switch(
+                  value: isMerchantView,
+                  onChanged: (val) => ref.read(isMerchantViewProvider.notifier).state = val,
+                  activeColor: const Color(0xFFF59E0B),
+                ),
               ),
-            ),
 
             const SizedBox(height: 16),
             _buildSettingItem(icon: LucideIcons.shield, title: "Sécurité", subtitle: "Code PIN et Biométrie"),
@@ -72,7 +77,15 @@ class SettingsScreen extends StatelessWidget {
 
             // Logout
             ElevatedButton(
-              onPressed: () {},
+              onPressed: () async {
+                await ref.read(authControllerProvider).signOut();
+                if (context.mounted) {
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (_) => const SplashScreen()),
+                        (route) => false,
+                  );
+                }
+              },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFFEF2F2),
                 foregroundColor: const Color(0xFFEF4444),
