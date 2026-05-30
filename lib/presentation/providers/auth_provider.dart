@@ -1,100 +1,69 @@
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/user_model.dart';
+import '../../data/services/api_service.dart';
 
-// Firebase instances
-final firebaseAuthProvider = Provider<FirebaseAuth>((ref) => FirebaseAuth.instance);
-final firestoreProvider = Provider<FirebaseFirestore>((ref) => FirebaseFirestore.instance);
+final apiServiceProvider = Provider<ApiService>((ref) => ApiService());
 
-// Auth state listener
-final authStateProvider = StreamProvider<User?>((ref) {
-  return ref.watch(firebaseAuthProvider).authStateChanges();
-});
-
-// Current user data provider
 final userProvider = StateProvider<UserModel?>((ref) => null);
 
-// Auth Controller
+final isMerchantViewProvider = StateProvider<bool>((ref) => false);
+
 final authControllerProvider = Provider((ref) => AuthController(ref));
 
 class AuthController {
   final Ref _ref;
   AuthController(this._ref);
 
+  ApiService get _api => _ref.read(apiServiceProvider);
+
   Future<void> register({
-    required String email,
+    required String phone,
+    required String firstName,
+    required String lastName,
     required String password,
-    required String name,
-    required String phoneNumber,
-    required bool asClient,
-    required bool asMerchant,
+    String? email,
+    required String role,
   }) async {
-    try {
-      final auth = _ref.read(firebaseAuthProvider);
-      final firestore = _ref.read(firestoreProvider);
-
-      // 1. Create user in Firebase Auth
-      final userCredential = await auth.createUserWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
-
-      final uid = userCredential.user!.uid;
-
-      // 2. Prepare roles
-      List<String> roles = [];
-      if (asClient) roles.add('client');
-      if (asMerchant) roles.add('merchant');
-
-      // 3. Create user document in Firestore
-      final userModel = UserModel(
-        uid: uid,
-        email: email,
-        name: name,
-        phoneNumber: phoneNumber,
-        balance: 0.0,
-        roles: roles,
-        createdAt: DateTime.now(),
-      );
-
-      await firestore.collection('users').doc(uid).set(userModel.toMap());
-
-      // 4. Update local state
-      _ref.read(userProvider.notifier).state = userModel;
-    } catch (e) {
-      rethrow;
-    }
+    final json = await _api.post('/auth/register', {
+      'phone': phone,
+      'firstName': firstName,
+      'lastName': lastName,
+      'password': password,
+      if (email != null && email.isNotEmpty) 'email': email,
+      'role': role,
+    });
+    await _api.saveToken(json['accessToken']);
+    _ref.read(userProvider.notifier).state = UserModel.fromJson(json['user']);
   }
 
-  Future<void> login(String email, String password) async {
-    try {
-      final auth = _ref.read(firebaseAuthProvider);
-      await auth.signInWithEmailAndPassword(email: email, password: password);
-      await fetchUserData();
-    } catch (e) {
-      rethrow;
-    }
+  Future<void> login(String phone, String password) async {
+    final json = await _api.post('/auth/login', {
+      'phone': phone,
+      'password': password,
+    });
+    await _api.saveToken(json['accessToken']);
+    _ref.read(userProvider.notifier).state = UserModel.fromJson(json['user']);
   }
 
   Future<void> fetchUserData() async {
-    final auth = _ref.read(firebaseAuthProvider);
-    final firestore = _ref.read(firestoreProvider);
-    final user = auth.currentUser;
+    final json = await _api.get('/auth/me');
+    _ref.read(userProvider.notifier).state = UserModel.fromJson(json);
+  }
 
-    if (user != null) {
-      final doc = await firestore.collection('users').doc(user.uid).get();
-      if (doc.exists) {
-        _ref.read(userProvider.notifier).state = UserModel.fromMap(doc.data()!, doc.id);
-      }
+  Future<bool> tryAutoLogin() async {
+    final token = await _api.getToken();
+    if (token == null) return false;
+    try {
+      await fetchUserData();
+      return true;
+    } catch (_) {
+      await _api.clearToken();
+      return false;
     }
   }
 
   Future<void> signOut() async {
-    await _ref.read(firebaseAuthProvider).signOut();
+    await _api.clearToken();
     _ref.read(userProvider.notifier).state = null;
   }
 }
-
-// Toggle between Client and Merchant view if user has both roles
-final isMerchantViewProvider = StateProvider<bool>((ref) => false);

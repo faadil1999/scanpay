@@ -1,29 +1,18 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'auth_provider.dart';
 import '../../data/models/transaction_model.dart';
+import '../../data/models/merchant_stats_model.dart';
+import 'auth_provider.dart';
 
-final transactionsProvider = StreamProvider<List<TransactionModel>>((ref) {
+final transactionsProvider = FutureProvider<List<TransactionModel>>((ref) async {
+  final api = ref.watch(apiServiceProvider);
   final user = ref.watch(userProvider);
-  final firestore = ref.watch(firestoreProvider);
-
-  if (user == null) return Stream.value([]);
-
-  // Fetch transactions where user is either sender or receiver
-  return firestore
-      .collection('transactions')
-      .where('senderId', isEqualTo: user.uid)
-      .orderBy('timestamp', descending: true)
-      .snapshots()
-      .map((snapshot) {
-    // This is a bit simplified, ideally you'd use a composite query or multiple streams
-    // For now, let's just fetch where they are sender.
-    // In a real app, you'd merge streams for sender and receiver.
-    return snapshot.docs
-        .map((doc) => TransactionModel.fromMap(doc.data(), doc.id))
-        .toList();
-  });
+  if (user == null) return [];
+  final json = await api.get('/transactions') as List;
+  return json.map((e) => TransactionModel.fromJson(e)).toList();
 });
 
-// A more complete version that handles both sender and receiver would be better
-// but Firestore doesn't support OR queries easily without multiple streams.
-// Let's stick to this for now or use a 'participants' array in Firestore.
+final merchantStatsProvider = FutureProvider<MerchantStats>((ref) async {
+  final api = ref.watch(apiServiceProvider);
+  final json = await api.get('/transactions/stats');
+  return MerchantStats.fromJson(json);
+});

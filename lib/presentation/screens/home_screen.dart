@@ -4,11 +4,24 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:intl/intl.dart';
 import '../providers/auth_provider.dart';
 import '../providers/transaction_provider.dart';
+import '../providers/wallet_provider.dart';
+import '../../data/models/transaction_model.dart';
+import '../../data/models/wallet_model.dart';
 import 'scanner_screen.dart';
 import 'generate_qr_screen.dart';
 import 'history_screen.dart';
 import 'settings_screen.dart';
 import 'auth/auth_choice_screen.dart';
+
+Color _statusColor(TransactionStatus status) {
+  switch (status) {
+    case TransactionStatus.success:    return const Color(0xFF1B5E5E);
+    case TransactionStatus.failed:     return Colors.red;
+    case TransactionStatus.pending:
+    case TransactionStatus.processing: return const Color(0xFFF5B800);
+    case TransactionStatus.refunded:   return Colors.purple;
+  }
+}
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -42,14 +55,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Color(0xFF64748B)),
                 ),
                 const SizedBox(height: 48),
-                // Fallback button if it takes too long
                 TextButton.icon(
                   onPressed: () async {
                     await ref.read(authControllerProvider).signOut();
                     if (context.mounted) {
                       Navigator.of(context).pushAndRemoveUntil(
-                        MaterialPageRoute(builder: (context) => const AuthChoiceScreen()),
-                            (route) => false,
+                        MaterialPageRoute(builder: (_) => const AuthChoiceScreen()),
+                        (route) => false,
                       );
                     }
                   },
@@ -64,16 +76,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       );
     }
 
-    // Check if user has both roles and which view is active
-    final hasBothRoles = user.roles.contains('client') && user.roles.contains('merchant');
     final isMerchantView = ref.watch(isMerchantViewProvider);
+    final bool effectiveIsMerchant = user.isMerchant ? true : isMerchantView;
 
-    // If user only has one role, force that view
-    final bool effectiveIsMerchant = hasBothRoles ? isMerchantView : user.isMerchant;
-
-    // Liste des écrans pour chaque onglet
     final List<Widget> screens = [
-      _buildDashboard(context, user, effectiveIsMerchant, hasBothRoles),
+      _buildDashboard(context, effectiveIsMerchant),
       effectiveIsMerchant ? const GenerateQRScreen() : const ScannerScreen(),
       const HistoryScreen(),
       const SettingsScreen(),
@@ -86,8 +93,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Widget _buildDashboard(BuildContext context, user, bool isMerchant, bool hasBothRoles) {
+  Widget _buildDashboard(BuildContext context, bool isMerchant) {
+    final user = ref.watch(userProvider)!;
     final transactionsAsync = ref.watch(transactionsProvider);
+    final walletAsync = ref.watch(defaultWalletProvider);
+    final statsAsync = isMerchant ? ref.watch(merchantStatsProvider) : null;
 
     return SafeArea(
       child: CustomScrollView(
@@ -109,41 +119,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             style: const TextStyle(color: Color(0xFF64748B), fontSize: 14, fontWeight: FontWeight.w500),
                           ),
                           Text(
-                            user.name,
+                            user.fullName,
                             style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
                           ),
                         ],
                       ),
-                      Row(
-                        children: [
-                          if (hasBothRoles)
-                            IconButton(
-                              icon: Icon(isMerchant ? LucideIcons.user : LucideIcons.store, color: const Color(0xFF64748B)),
-                              onPressed: () {
-                                ref.read(isMerchantViewProvider.notifier).state = !isMerchant;
-                              },
-                              tooltip: isMerchant ? 'Passer en mode Client' : 'Passer en mode Marchand',
-                            ),
-                          CircleAvatar(
-                            radius: 24,
-                            backgroundImage: user.avatarUrl != null ? NetworkImage(user.avatarUrl!) : null,
-                            child: user.avatarUrl == null ? const Icon(Icons.person) : null,
-                          ),
-                        ],
+                      CircleAvatar(
+                        radius: 24,
+                        backgroundImage: user.avatarUrl != null ? NetworkImage(user.avatarUrl!) : null,
+                        child: user.avatarUrl == null ? const Icon(Icons.person) : null,
                       ),
                     ],
                   ),
                   const SizedBox(height: 32),
-                  _buildBalanceCard(context, user, isMerchant),
+                  _buildBalanceCard(context, walletAsync, statsAsync, isMerchant),
                   const SizedBox(height: 32),
-                  _buildSectionHeader(isMerchant ? "Outils Marchand" : "Actions Rapides"),
+                  _buildSectionHeader("Actions Rapides"),
                   const SizedBox(height: 16),
-                  _buildQuickActions(context, isMerchant),
+                  _buildQuickActions(),
                   const SizedBox(height: 32),
                   _buildSectionHeader("Activité Récente"),
                   const SizedBox(height: 16),
                   transactionsAsync.when(
-                    data: (transactions) => _buildRecentActivity(transactions, user.uid),
+                    data: (transactions) => _buildRecentActivity(transactions, user.id),
                     loading: () => const Center(child: CircularProgressIndicator()),
                     error: (e, s) => Text('Erreur: $e'),
                   ),
@@ -156,7 +154,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Widget _buildBalanceCard(BuildContext context, user, bool isMerchant) {
+  Widget _buildBalanceCard(
+    BuildContext context,
+    AsyncValue<WalletModel?> walletAsync,
+    AsyncValue? statsAsync,
+    bool isMerchant,
+  ) {
     final primaryColor = isMerchant ? const Color(0xFFF59E0B) : const Color(0xFF059669);
 
     return Container(
@@ -167,7 +170,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         borderRadius: BorderRadius.circular(32),
         boxShadow: [
           BoxShadow(
-            color: primaryColor.withOpacity(0.3),
+            color: primaryColor.withValues(alpha: 0.3),
             blurRadius: 20,
             offset: const Offset(0, 10),
           ),
@@ -180,35 +183,33 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                isMerchant ? "Revenus du jour" : "Solde disponible",
-                style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1),
+                isMerchant ? "Revenus total" : "Solde disponible",
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1,
+                ),
               ),
-              Icon(LucideIcons.wallet, color: Colors.white.withOpacity(0.5), size: 20),
+              Icon(LucideIcons.wallet, color: Colors.white.withValues(alpha: 0.5), size: 20),
             ],
           ),
           const SizedBox(height: 8),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Text(
-                user.balance.toStringAsFixed(0),
-                style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                "FCFA",
-                style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
+          if (isMerchant && statsAsync != null)
+            statsAsync.when(
+              data: (stats) => _balanceText((stats as dynamic).formattedRevenue),
+              loading: () => const CircularProgressIndicator(color: Colors.white),
+              error: (_, __) => _balanceText('— XOF'),
+            )
+          else
+            walletAsync.when(
+              data: (wallet) => _balanceText(wallet?.formattedBalance ?? '0 XOF'),
+              loading: () => const CircularProgressIndicator(color: Colors.white),
+              error: (_, __) => _balanceText('— XOF'),
+            ),
           const SizedBox(height: 24),
           ElevatedButton(
-            onPressed: () {
-              setState(() {
-                _selectedIndex = 1; // Switch to Scan/QR tab
-              });
-            },
+            onPressed: () => setState(() => _selectedIndex = 1),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.white,
               foregroundColor: primaryColor,
@@ -226,6 +227,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  Widget _balanceText(String text) {
+    return Text(
+      text,
+      style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold),
+    );
+  }
+
   Widget _buildSectionHeader(String title) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -239,7 +247,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Widget _buildQuickActions(BuildContext context, bool isMerchant) {
+  Widget _buildQuickActions() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -258,7 +266,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           width: 56,
           height: 56,
           decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
+            color: color.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(16),
           ),
           child: Icon(icon, color: color, size: 24),
@@ -269,7 +277,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Widget _buildRecentActivity(List transactions, String currentUid) {
+  Widget _buildRecentActivity(List<TransactionModel> transactions, String currentUserId) {
     if (transactions.isEmpty) {
       return const Center(
         child: Padding(
@@ -289,10 +297,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         itemCount: transactions.length > 5 ? 5 : transactions.length,
-        separatorBuilder: (context, index) => const Divider(height: 1, color: Color(0xFFF1F5F9)),
+        separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFFF1F5F9)),
         itemBuilder: (context, index) {
           final tx = transactions[index];
-          final isOutgoing = tx.senderId == currentUid;
+          final isOutgoing = tx.senderId == currentUserId;
+          final statusColor = _statusColor(tx.status);
 
           return ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
@@ -309,21 +318,25 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 color: isOutgoing ? const Color(0xFFEF4444) : const Color(0xFF22C55E),
               ),
             ),
-            title: Text(
-              isOutgoing ? tx.receiverName : tx.senderName,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-            ),
+            title: Text(tx.reference, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
             subtitle: Text(
-              DateFormat('dd MMM, HH:mm').format(tx.timestamp),
+              DateFormat('dd MMM, HH:mm').format(tx.createdAt),
               style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
             ),
-            trailing: Text(
-              "${isOutgoing ? '-' : '+'}${tx.amount.toStringAsFixed(0)} F",
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
-                color: isOutgoing ? const Color(0xFFEF4444) : const Color(0xFF22C55E),
-              ),
+            trailing: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  "${isOutgoing ? '-' : '+'}${tx.formattedAmount}",
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: isOutgoing ? const Color(0xFFEF4444) : const Color(0xFF22C55E),
+                  ),
+                ),
+                Text(tx.statusLabel, style: TextStyle(fontSize: 10, color: statusColor)),
+              ],
             ),
           );
         },
@@ -336,9 +349,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     return Container(
       height: 80,
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         color: Colors.white,
-        border: const Border(top: BorderSide(color: Color(0xFFF1F5F9))),
+        border: Border(top: BorderSide(color: Color(0xFFF1F5F9))),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,

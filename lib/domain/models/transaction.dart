@@ -1,5 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 class TransactionModel {
   final String id;
   final String merchantId;
@@ -17,14 +15,15 @@ class TransactionModel {
     required this.status,
   });
 
-  factory TransactionModel.fromFirestore(DocumentSnapshot doc) {
-    Map data = doc.data() as Map;
+  factory TransactionModel.fromMap(String id, Map<String, dynamic> data) {
     return TransactionModel(
-      id: doc.id,
+      id: id,
       merchantId: data['merchantId'] ?? '',
       userId: data['userId'] ?? '',
       amount: (data['amount'] ?? 0).toDouble(),
-      timestamp: (data['timestamp'] as Timestamp).toDate(),
+      timestamp: data['timestamp'] != null
+          ? DateTime.parse(data['timestamp'] as String)
+          : DateTime.now(),
       status: data['status'] ?? 'pending',
     );
   }
@@ -34,7 +33,7 @@ class TransactionModel {
       'merchantId': merchantId,
       'userId': userId,
       'amount': amount,
-      'timestamp': FieldValue.serverTimestamp(),
+      'timestamp': timestamp.toIso8601String(),
       'status': status,
     };
   }

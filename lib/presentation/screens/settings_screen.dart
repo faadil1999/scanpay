@@ -10,26 +10,17 @@ class SettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(userProvider);
-    final isMerchantView = ref.watch(isMerchantViewProvider);
-    final hasBothRoles = user?.roles.contains('client') == true && user?.roles.contains('merchant') == true;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
-      appBar: AppBar(
-        title: const Text('Paramètres'),
-        elevation: 0,
-      ),
+      appBar: AppBar(title: const Text('Paramètres'), elevation: 0),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           children: [
-            // Profil Summary
             Container(
               padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-              ),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
               child: Row(
                 children: [
                   CircleAvatar(
@@ -42,47 +33,50 @@ class SettingsScreen extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        user?.name ?? "Utilisateur",
+                        user?.fullName ?? "Utilisateur",
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                       ),
                       Text(
-                        user?.phoneNumber ?? "",
+                        user?.phone ?? "",
                         style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
                       ),
+                      if (user != null)
+                        Container(
+                          margin: const EdgeInsets.only(top: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: user.isMerchant
+                                ? const Color(0xFFFEF3C7)
+                                : const Color(0xFFDCFCE7),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            user.isMerchant ? 'Marchand' : 'Client',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: user.isMerchant
+                                  ? const Color(0xFFF59E0B)
+                                  : const Color(0xFF059669),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 32),
-
-            // Mode Switch (Only if user has both roles)
-            if (hasBothRoles)
-              _buildSettingItem(
-                icon: LucideIcons.store,
-                title: "Mode Marchand",
-                subtitle: "Basculer vers l'interface marchand",
-                trailing: Switch(
-                  value: isMerchantView,
-                  onChanged: (val) => ref.read(isMerchantViewProvider.notifier).state = val,
-                  activeColor: const Color(0xFFF59E0B),
-                ),
-              ),
-
-            const SizedBox(height: 16),
             _buildSettingItem(icon: LucideIcons.shield, title: "Sécurité", subtitle: "Code PIN et Biométrie"),
             _buildSettingItem(icon: LucideIcons.helpCircle, title: "Aide & Support", subtitle: "Contactez-nous"),
-
             const SizedBox(height: 32),
-
-            // Logout
             ElevatedButton(
               onPressed: () async {
                 await ref.read(authControllerProvider).signOut();
                 if (context.mounted) {
                   Navigator.of(context).pushAndRemoveUntil(
                     MaterialPageRoute(builder: (_) => const SplashScreen()),
-                        (route) => false,
+                    (route) => false,
                   );
                 }
               },
@@ -112,8 +106,7 @@ class SettingsScreen extends ConsumerWidget {
       child: Row(
         children: [
           Container(
-            width: 40,
-            height: 40,
+            width: 40, height: 40,
             decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(12)),
             child: Icon(icon, size: 20, color: const Color(0xFF64748B)),
           ),
